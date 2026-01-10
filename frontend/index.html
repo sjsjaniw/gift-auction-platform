@@ -1,0 +1,135 @@
+<!-- ===== FILE: ./frontend/index.html ===== -->
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+        />
+        <title>Telegram Auction</title>
+        <!-- Подключаем стили -->
+        <link rel="stylesheet" href="style.css" />
+        <!-- Подключаем Socket.IO (автоматически отдается сервером) -->
+        <script src="/socket.io/socket.io.js"></script>
+    </head>
+    <body>
+        <!-- ЭКРАН 1: ВХОД -->
+        <div id="screen-login" class="screen">
+            <div class="login-card">
+                <div class="icon">💎</div>
+                <h2>Auction Access</h2>
+                <p>Select an active auction and enter your User ID to start.</p>
+
+                <!-- Выбор аукциона -->
+                <div class="field">
+                    <label>Select Auction</label>
+                    <select id="inp-auction">
+                        <option value="" disabled selected>
+                            Loading auctions...
+                        </option>
+                    </select>
+                </div>
+
+                <!-- Ввод ID пользователя -->
+                <div class="field">
+                    <label>User ID</label>
+                    <input
+                        type="text"
+                        id="inp-user"
+                        placeholder="Paste ID from terminal..."
+                    />
+                </div>
+
+                <button id="btn-login" class="primary-btn">
+                    Enter Auction
+                </button>
+            </div>
+        </div>
+
+        <!-- ЭКРАН 2: АУКЦИОН -->
+        <div id="screen-app" class="screen hidden">
+            <!-- Верхняя панель: Инфо о юзере -->
+            <header>
+                <div class="user-profile">
+                    <div class="avatar">👤</div>
+                    <div class="user-details">
+                        <div id="display-username" class="username">
+                            Loading...
+                        </div>
+                        <div class="balance">
+                            Available: <span id="display-balance">0</span> ⭐️
+                        </div>
+                    </div>
+                </div>
+                <div class="frozen-badge">
+                    ❄️ Frozen: <span id="display-frozen">0</span>
+                </div>
+            </header>
+
+            <!-- Главный блок: Таймер и Раунд -->
+            <section class="status-card">
+                <h1 id="auction-title">Auction Title</h1>
+
+                <div class="round-info">
+                    <span class="round-tag"
+                        >ROUND <span id="round-number">1</span></span
+                    >
+                    <span class="gifts-tag"
+                        >🎁 <span id="gifts-count">0</span> GIFTS</span
+                    >
+                </div>
+
+                <div class="timer-wrapper">
+                    <div id="timer">--:--</div>
+                    <div class="timer-desc">until round ends</div>
+                </div>
+            </section>
+
+            <!-- Панель управления ставками -->
+            <section class="control-panel">
+                <div class="bid-input-group">
+                    <span class="currency-icon">⭐️</span>
+                    <!-- Ввод ставки -->
+                    <input type="number" id="inp-amount" placeholder="Amount" />
+                </div>
+                <button id="btn-bid" class="action-btn">PLACE BID</button>
+                <div id="status-log" class="status-log"></div>
+            </section>
+
+            <!-- Таблица лидеров -->
+            <section class="leaderboard-section">
+                <h3>Leaderboard</h3>
+                <div class="leaderboard-header">
+                    <span>Participant</span>
+                    <span>Bid Amount</span>
+                </div>
+                <div id="leaderboard-list" class="leaderboard-list">
+                    <!-- Сюда JavaScript будет вставлять игроков -->
+                    <div class="empty-state">Waiting for data...</div>
+                </div>
+            </section>
+
+            <!-- ЭКРАН 3: ИНВЕНТАРЬ (НОВОЕ) -->
+            <!-- Здесь будут отображаться выигранные подарки -->
+            <section class="inventory-section">
+                <h3>My Collection 🎒</h3>
+
+                <!-- Сетка для подарков -->
+                <div id="inventory-grid" class="inventory-grid">
+                    <!-- JavaScript будет генерировать карточки по такому шаблону:
+                    <div class="gift-card" style="background: #007aff">
+                        <div class="gift-icon">⭐️</div>
+                        <div class="gift-name">Golden Star #1</div>
+                        <div class="gift-price">Bought for: 1000</div>
+                    </div>
+                    -->
+                    <div class="empty-state">No gifts won yet.</div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Подключаем логику -->
+        <script src="js.js"></script>
+    </body>
+</html>
