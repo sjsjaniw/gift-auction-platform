@@ -22,6 +22,8 @@
     "nodemon": "^3.1.11",
     "redlock": "^5.0.0-beta.2",
     "socket.io": "^4.8.3",
+    "socks": "^2.8.7",
+    "socks-proxy-agent": "^8.0.5",
     "zod": "^4.3.5"
   },
   "devDependencies": {

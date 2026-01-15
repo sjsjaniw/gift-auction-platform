@@ -1,12 +1,11 @@
-/* ===== FILE: ./frontend/js.js ===== */
 const socket = io();
 
 // Состояние приложения
 const state = {
   userId: localStorage.getItem("userId") || "",
   auctionId: localStorage.getItem("auctionId") || "",
-  hasWon: false, // Выиграл ли я в этом аукционе
-  isFinished: false, // 🔥 Глобальный флаг: Аукцион завершен
+  hasWon: false,
+  isFinished: false,
   timerInterval: null,
   userDataInterval: null,
 };
@@ -25,6 +24,7 @@ const ui = {
   buttons: {
     login: document.getElementById("btn-login"),
     bid: document.getElementById("btn-bid"),
+    setupDemo: document.getElementById("btn-setup-demo"),
   },
   display: {
     username: document.getElementById("display-username"),
@@ -37,6 +37,9 @@ const ui = {
     leaderboard: document.getElementById("leaderboard-list"),
     status: document.getElementById("status-log"),
     inventory: document.getElementById("inventory-grid"),
+    demoInfo: document.getElementById("demo-info"),
+    botsGrid: document.getElementById("bots-grid"), // Используем тот же ID контейнера
+    botsContainer: document.getElementById("bots-container"),
   },
 };
 
@@ -44,10 +47,101 @@ const ui = {
 document.addEventListener("DOMContentLoaded", () => {
   if (!ui.inputs.auction) return;
   loadAuctionList();
+
   if (state.userId && ui.inputs.user) ui.inputs.user.value = state.userId;
+
   if (ui.buttons.login) ui.buttons.login.addEventListener("click", handleLogin);
   if (ui.buttons.bid) ui.buttons.bid.addEventListener("click", placeBid);
+  if (ui.buttons.setupDemo)
+    ui.buttons.setupDemo.addEventListener("click", setupDemo);
 });
+
+// --- ЛОГИКА ДЕМО (SIMULATION) ---
+async function setupDemo() {
+  const btn = ui.buttons.setupDemo;
+  btn.disabled = true;
+  btn.innerText = "⏳ Resetting DB & Starting Bots...";
+
+  try {
+    const res = await fetch("/api/admin/reset", { method: "POST" });
+    const json = await res.json();
+
+    if (json.success) {
+      // 1. Показываем инфо-блок
+      if (ui.display.demoInfo) ui.display.demoInfo.classList.remove("hidden");
+
+      // 2. Обновляем текстовые коды (Admin ID)
+      const codeUser = document.getElementById("code-user-id");
+      const codeAuc = document.getElementById("code-auction-id");
+      if (codeUser) codeUser.innerText = json.data.myUserId;
+      if (codeAuc) codeAuc.innerText = json.data.auctionId;
+
+      // 3. Автозаполнение поля
+      if (ui.inputs.user) ui.inputs.user.value = json.data.myUserId;
+
+      // 4. 👇 Рендерим СПИСОК ботов (Новый вид)
+      if (json.data.bots && ui.display.botsGrid) {
+        ui.display.botsContainer.classList.remove("hidden");
+        // Меняем класс контейнера на новый (для списка)
+        ui.display.botsGrid.className = "bots-list";
+        ui.display.botsGrid.innerHTML = "";
+
+        json.data.bots.forEach((bot) => {
+          const row = document.createElement("div");
+          row.className = "bot-row";
+
+          // Формируем строку: "Bot_1       65b7..."
+          row.innerHTML = `
+            <span>${bot.username}</span>
+            <span class="bot-id">${bot.id}</span>
+          `;
+
+          // При клике по строке - заполняем input (удобно для копипаста)
+          row.onclick = () => {
+            ui.inputs.user.value = bot.id;
+            // Короткая подсветка, что нажалось
+            row.style.background = "#333";
+            setTimeout(() => (row.style.background = ""), 200);
+          };
+
+          ui.display.botsGrid.appendChild(row);
+        });
+      }
+
+      // 5. Обновляем выпадающий список
+      await loadAuctionList();
+      if (ui.inputs.auction) ui.inputs.auction.value = json.data.auctionId;
+
+      // 6. Подключаем сокеты
+      state.auctionId = json.data.auctionId;
+      console.log("🔌 Re-joining socket room:", state.auctionId);
+      socket.emit("joinAuction", state.auctionId);
+
+      btn.innerText = "✅ Done! Bots active (60s)";
+    } else {
+      btn.innerText = "❌ Failed";
+    }
+  } catch (e) {
+    console.error(e);
+    alert("Error: " + e.message);
+    btn.innerText = "❌ Network Error";
+  } finally {
+    setTimeout(() => {
+      btn.disabled = false;
+      if (btn.innerText.includes("Done") || btn.innerText.includes("Error")) {
+        btn.innerText = "🛠 Reset & Start Simulation";
+      }
+    }, 5000);
+  }
+}
+
+// Хелпер для копирования ID
+window.copyToClipboard = (id) => {
+  const el = document.getElementById(id);
+  if (el) {
+    navigator.clipboard.writeText(el.innerText);
+  }
+};
 
 // --- ЛОГИКА ВХОДА ---
 async function loadAuctionList() {
@@ -96,18 +190,16 @@ function handleLogin() {
 
 // --- ОСНОВНАЯ ЛОГИКА ---
 function startApp() {
-  console.log("⚡ Starting logic:", state.auctionId);
+  console.log("⚡ Starting logic for:", state.auctionId);
 
-  // 1. Сокеты
   socket.emit("joinAuction", state.auctionId);
+  socket.off("auctionUpdate");
   socket.on("auctionUpdate", (data) => renderUI(data));
 
-  // 2. Загрузка данных
   fetchUserInfo();
   fetchUserInventory();
   fetchAuctionState();
 
-  // 3. Фоновое обновление (раз в 5 сек)
   if (state.userDataInterval) clearInterval(state.userDataInterval);
   state.userDataInterval = setInterval(() => {
     fetchUserInfo();
@@ -206,7 +298,6 @@ function lockInterfaceAsWinner() {
 }
 
 function setFinishedState(leaderboard) {
-  // 🔥 Железобетонная установка статуса "Конец"
   state.isFinished = true;
   if (state.timerInterval) clearInterval(state.timerInterval);
 
@@ -227,7 +318,6 @@ function setFinishedState(leaderboard) {
     ui.inputs.amount.placeholder = "---";
   }
 
-  // Рисуем финальный лидерборд
   renderLeaderboard(leaderboard, 0);
 }
 
@@ -235,21 +325,16 @@ function renderUI(data) {
   const { auction, leaderboard, cutoffPrice } = data;
   if (!auction) return;
 
-  // 1. Проверяем статус аукциона
   if (auction.status === "FINISHED") {
     setFinishedState(leaderboard);
-    return; // ⛔️ Выходим, чтобы таймер не запустился
+    return;
   }
 
-  // Если вдруг статус ACTIVE, но у нас локально флаг стоял (странная ситуация, но сбросим)
   state.isFinished = false;
 
-  // 2. Если мы победитель
   if (state.hasWon) {
     lockInterfaceAsWinner();
-    // Но таймер и лидерборд продолжаем обновлять, чтобы видеть прогресс
   } else {
-    // Обычное состояние
     if (
       ui.buttons.bid &&
       ui.buttons.bid.disabled &&
@@ -272,7 +357,6 @@ function renderUI(data) {
   );
   if (roundConfig) {
     if (ui.display.gifts) ui.display.gifts.innerText = roundConfig.giftCount;
-    // Запускаем таймер
     runTimer(new Date(roundConfig.endTime).getTime());
     renderLeaderboard(leaderboard, roundConfig.giftCount);
   }
@@ -321,13 +405,10 @@ function renderInventory(gifts) {
   });
 }
 
-// 🔥 СТАБИЛЬНЫЙ ТАЙМЕР
 function runTimer(endTime) {
-  // Очищаем старый интервал
   if (state.timerInterval) clearInterval(state.timerInterval);
 
   const tick = () => {
-    // ⛔️ Если аукцион уже завершен, не даем таймеру ничего писать
     if (state.isFinished) {
       clearInterval(state.timerInterval);
       return;
@@ -337,12 +418,9 @@ function runTimer(endTime) {
 
     if (!ui.display.timer) return;
 
-    // Переходный момент
     if (diff <= 0) {
       ui.display.timer.innerText = "Calculations...";
       ui.display.timer.style.color = "#8e8e93";
-
-      // Долбим сервер, пока он не скажет статус
       fetchAuctionState();
       return;
     }

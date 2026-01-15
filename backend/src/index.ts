@@ -3,9 +3,9 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import dotenv from "dotenv";
 import path from "path";
-import mongoose from "mongoose"; // Добавили для shutdown
+import mongoose from "mongoose";
 import { connectDB } from "./config/db";
-import { redisClient } from "./config/redis"; // Добавили для shutdown
+import { redisClient } from "./config/redis";
 import router from "./routes";
 import { startAuctionWorker } from "./workers/auction.worker";
 
@@ -20,7 +20,7 @@ const io = new Server(httpServer, {
 });
 
 // Middleware: Делаем io доступным в контроллерах
-app.use((req, res, next) => {
+app.use((req, _res, next) => {
   (req as any).io = io;
   next();
 });
@@ -41,7 +41,7 @@ console.log("📂 Serving frontend from:", frontendPath);
 app.use(express.static(frontendPath));
 
 // 3. Fallback (SPA) & 404 API Handling
-app.get(/.*/, (req, res, next) => {
+app.get(/.*/, (req, res, _next) => {
   // Если это API запрос, которого нет в роутере -> возвращаем JSON 404
   if (req.path.startsWith("/api")) {
     return res.status(404).json({ error: "API Endpoint not found" });

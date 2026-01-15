@@ -11,7 +11,6 @@ const ObjectIdSchema = z
 export const PlaceBidSchema = z.object({
   auctionId: ObjectIdSchema,
   amount: z.number().int().positive(),
-  // userId берем из заголовков, но если он в body — добавляем сюда
 });
 
 export type PlaceBidDto = z.infer<typeof PlaceBidSchema>;

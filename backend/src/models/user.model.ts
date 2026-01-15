@@ -3,12 +3,10 @@ import mongoose, { InferSchemaType, Model } from "mongoose";
 const userSchema = new mongoose.Schema(
   {
     username: { type: String, required: true, unique: true },
-    password: { type: String, select: false }, // select: false чтобы случайно не вернуть его в API
+    password: { type: String, select: false },
 
-    // Telegram Stars (целые числа)
     balance: { type: Number, required: true, default: 0, min: 0 },
 
-    // Деньги, заблокированные в активных ставках
     frozenBalance: { type: Number, required: true, default: 0, min: 0 },
   },
   { timestamps: true },

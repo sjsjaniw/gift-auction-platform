@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-// RoundSchema остается как был...
 const RoundSchema = z.object({
   roundNumber: z.number().int().positive(),
   giftCount: z.number().int().positive(),
@@ -22,7 +21,6 @@ export const CreateAuctionSchema = z.object({
     .regex(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/)
     .default("#007aff"),
 
-  // 👇 ДОБАВЛЯЕМ ЭТИ ПОЛЯ (чтобы скрипт симуляции не падал)
   status: z.enum(["PENDING", "ACTIVE", "FINISHED", "CANCELLED"]).optional(),
   currentRoundNumber: z.number().int().positive().optional(),
 });
