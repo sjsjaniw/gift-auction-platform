@@ -1,6 +1,5 @@
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import { createServer } from "http";
-import { Server } from "socket.io";
 import dotenv from "dotenv";
 import path from "path";
 import mongoose from "mongoose";
@@ -8,106 +7,117 @@ import { connectDB } from "./config/db";
 import { redisClient } from "./config/redis";
 import router from "./routes";
 import { startAuctionWorker } from "./workers/auction.worker";
+import { logger } from "./utils/logger";
+import { httpLogger } from "./middleware/httpLogger";
+import { initSocket } from "./socket";
 
-dotenv.config();
+if (process.env.NODE_ENV !== "production") {
+  dotenv.config();
+}
+
+interface SystemError extends Error {
+  code?: string;
+  syscall?: string;
+}
+
+let isShuttingDown = false;
+const PORT = process.env.PORT || 3000;
 
 const app = express();
+const frontendPath = path.join(__dirname, "../../frontend");
+
 const httpServer = createServer(app);
+const io = initSocket(httpServer);
 
-// Настраиваем Socket.io
-const io = new Server(httpServer, {
-  cors: { origin: "*" },
-});
-
-// Middleware: Делаем io доступным в контроллерах
-app.use((req, _res, next) => {
-  (req as any).io = io;
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  req.io = io;
   next();
 });
 
-const PORT = process.env.PORT || 3000;
-
 app.use(express.json());
-
-// 1. API Routes
+app.use(httpLogger);
 app.use("/api", router);
-
-// 2. Раздача Фронтенда
-// Используем process.cwd(), чтобы путь был от корня проекта (безопаснее при сборке)
-// Если запускаешь из корня: backend/frontend -> ../frontend
-const frontendPath = path.join(__dirname, "../../frontend");
-console.log("📂 Serving frontend from:", frontendPath);
 
 app.use(express.static(frontendPath));
 
-// 3. Fallback (SPA) & 404 API Handling
-app.get(/.*/, (req, res, _next) => {
-  // Если это API запрос, которого нет в роутере -> возвращаем JSON 404
+app.get(/.*/, (req: Request, res: Response, _next: NextFunction) => {
   if (req.path.startsWith("/api")) {
     return res.status(404).json({ error: "API Endpoint not found" });
   }
-  // Иначе отдаем index.html (для React/SPA роутинга)
-  res.sendFile(path.join(frontendPath, "index.html"), (err) => {
+  res.sendFile(path.join(frontendPath, "index.html"), (err: unknown) => {
     if (err) {
-      // Если фронта нет, чтоб сервер не падал молча
+      const sysErr = err as SystemError;
+      if (res.headersSent) return;
       res.status(500).send("Frontend not found. Did you run build?");
+      logger.error("SendFile error", sysErr);
     }
   });
 });
 
-// 4. Логика Socket.IO
 io.on("connection", (socket) => {
-  console.log("🔌 Client connected:", socket.id);
+  logger.info("Client connected", { socketId: socket.id });
 
-  socket.on("joinAuction", (auctionId) => {
+  socket.on("joinAuction", (auctionId: string) => {
     socket.join(auctionId);
-    console.log(`👤 User joined room: ${auctionId}`);
+    logger.debug(`User joined room`, { socketId: socket.id, auctionId });
   });
 });
 
-// 5. Запуск сервера
 const start = async () => {
   try {
     await connectDB();
 
-    // Запускаем воркер
     startAuctionWorker();
 
     httpServer.listen(PORT, () => {
-      console.log(`🚀 Server running on http://localhost:${PORT}`);
-      console.log(`🌐 Frontend available at http://localhost:${PORT}`);
+      logger.info(`Server running on http://localhost:${PORT}`);
     });
   } catch (err) {
-    console.error("Failed to start server:", err);
+    logger.error("Failed to start server", err);
     process.exit(1);
   }
 };
 
 start();
 
-// --- GRACEFUL SHUTDOWN (Бонус для судей) ---
-// Корректно закрываем соединения при Ctrl+C или Docker stop
-const gracefulShutdown = async () => {
-  console.log("\n🔻 Shutting down gracefully...");
+const gracefulShutdown = async (signal: string) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  logger.warn(`\nShutting down gracefully (${signal})...`);
 
   try {
-    // Закрываем HTTP сервер (перестаем принимать запросы)
-    httpServer.close(() => console.log("   HTTP server closed"));
+    await new Promise<void>((resolve, reject) => {
+      if (!httpServer.listening) {
+        logger.info("HTTP server was not running");
+        return resolve();
+      }
 
-    // Отключаем Redis
-    await redisClient.quit();
-    console.log("   Redis disconnected");
+      httpServer.close((err) => {
+        const sysErr = err as SystemError;
+        if (sysErr && sysErr.code !== "ERR_SERVER_NOT_RUNNING") {
+          return reject(sysErr);
+        }
+        logger.info("HTTP server closed");
+        resolve();
+      });
+    });
 
-    // Отключаем Mongo
-    await mongoose.connection.close();
-    console.log("   MongoDB disconnected");
+    if (redisClient.status === "ready" || redisClient.status === "connecting") {
+      await redisClient.quit();
+      logger.info("Redis disconnected");
+    }
 
+    if (mongoose.connection.readyState === 1) {
+      await mongoose.connection.close();
+      logger.info("MongoDB disconnected");
+    }
     process.exit(0);
   } catch (err) {
-    console.error("Error during shutdown:", err);
+    logger.error("Error during shutdown:", err);
     process.exit(1);
   }
 };
 
-process.on("SIGTERM", gracefulShutdown);
-process.on("SIGINT", gracefulShutdown);
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));

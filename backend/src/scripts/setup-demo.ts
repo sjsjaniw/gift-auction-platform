@@ -5,18 +5,17 @@ import { Bid } from "../models/bid.model";
 import { Gift } from "../models/gift.model";
 import { Transaction } from "../models/transaction.model";
 import { redisClient } from "../config/redis";
-import { Server } from "socket.io"; // 👈 Импорт типа
+import { Server } from "socket.io";
 
 const CONFIG = {
   adminName: "Admin",
-  botsCount: 50, // 15 ботов достаточно для демки
-  auctionTitle: "demo auction",
+  botsCount: 50,
+  auctionTitle: "Auction Demo",
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const initializeDemo = async () => {
-  // Очистка
   await Promise.all([
     Auction.deleteMany({}),
     User.deleteMany({}),
@@ -26,24 +25,21 @@ export const initializeDemo = async () => {
     redisClient.flushall(),
   ]);
 
-  // Админ
   const admin = await User.create({
     username: CONFIG.adminName,
-    balance: 10_000_000,
+    balance: 100_000_000_000,
   });
 
-  // Боты
   const botsData = [];
   for (let i = 1; i <= CONFIG.botsCount; i++) {
     botsData.push({
-      username: `Bot_${i}`, // Сделал имя покрасивее
+      username: `Bot_${i}`,
       balance: 500_000,
       frozenBalance: 0,
     });
   }
   const bots = await User.insertMany(botsData);
 
-  // Аукцион
   const startTime = new Date();
   const auction = await AuctionService.createAuction({
     title: CONFIG.auctionTitle,
@@ -54,20 +50,20 @@ export const initializeDemo = async () => {
     startTime: startTime,
     currentRoundNumber: 1,
     assetName: "Blue Gem",
-    assetSymbol: "💎",
+    assetSymbol: "GEM",
     assetColor: "#00C7FC",
     rounds: [
       {
         roundNumber: 1,
         giftCount: 5,
-        durationSeconds: 180,
-        endTime: new Date(startTime.getTime() + 180000),
+        durationSeconds: 60,
+        endTime: new Date(startTime.getTime() + 60000),
       },
       {
         roundNumber: 2,
         giftCount: 5,
-        durationSeconds: 120,
-        endTime: new Date(startTime.getTime() + 300000),
+        durationSeconds: 60,
+        endTime: new Date(startTime.getTime() + 120000),
       },
     ],
   });
@@ -75,47 +71,86 @@ export const initializeDemo = async () => {
   return {
     auctionId: auction._id.toString(),
     adminId: admin._id.toString(),
-    // Возвращаем полные объекты, чтобы отобразить имена на фронте
     bots: bots.map((b) => ({ id: b._id.toString(), username: b.username })),
-    botsList: bots, // Для внутреннего использования
+    botsList: bots,
   };
 };
 
-// 👇 Добавили аргумент io
 export const startTrafficGen = async (
   auctionId: string,
   bots: any[],
   durationSeconds: number,
   io: Server,
 ) => {
-  console.log(`🤖 Traffic started for ${durationSeconds}s`);
-  const endTime = Date.now() + durationSeconds * 1000;
+  console.log(`\nSTARTING CONCURRENT LOAD TEST (${durationSeconds}s)`);
+  console.log(`Active Bots: ${bots.length}`);
+  console.log(`Strategy: Waves of parallel requests\n`);
 
+  const endTime = Date.now() + durationSeconds * 1000;
   let currentEstimatedPrice = 100;
 
   while (Date.now() < endTime) {
-    const randomBot = bots[Math.floor(Math.random() * bots.length)];
-    const bidAmount = currentEstimatedPrice + Math.floor(Math.random() * 50);
+    const WAVE_SIZE = Math.floor(Math.random() * 10) + 5;
+    const promises = [];
 
-    try {
-      await AuctionService.placeBid(
+    for (let i = 0; i < WAVE_SIZE; i++) {
+      const randomBot = bots[Math.floor(Math.random() * bots.length)];
+      const bidAmount =
+        currentEstimatedPrice + Math.floor(Math.random() * 50) + 10;
+
+      const p = AuctionService.placeBid(
         randomBot._id.toString(),
         auctionId,
         bidAmount,
-      );
-      currentEstimatedPrice = bidAmount;
+      )
+        .then((res) => {
+          if (res.totalAmount > currentEstimatedPrice) {
+            currentEstimatedPrice = res.totalAmount;
+          }
+          process.stdout.write("[OK] ");
+          return "success";
+        })
+        .catch((err) => {
+          const msg = err.message || "";
+          if (
+            msg.includes("Too fast") ||
+            msg.includes("lock") ||
+            msg.includes("optimistic")
+          ) {
+            process.stdout.write("[LOCKED] ");
+            return "blocked";
+          } else if (msg.includes("too low")) {
+            process.stdout.write("[LOW] ");
+            return "low_bid";
+          } else {
+            process.stdout.write("[ERR] ");
+            return "error";
+          }
+        });
 
-      // 🔥 ВАЖНО: Эмитим событие обновления для всех клиентов
-      // Чтобы лидерборд прыгал в реальном времени
-      const newState = await AuctionService.getAuctionState(auctionId);
-      if (newState && io) {
-        io.to(auctionId).emit("auctionUpdate", newState);
-      }
-    } catch (e) {
-      currentEstimatedPrice += 20;
+      promises.push(p);
     }
 
-    await sleep(300); // Чуть медленнее, чтобы не спамить сокеты насмерть
+    await Promise.all(promises);
+
+    console.log(` | Price: ${currentEstimatedPrice}`);
+
+    if (io) {
+      try {
+        const newState = await AuctionService.getAuctionState(auctionId);
+        if (newState) {
+          if (newState.leaderboard) {
+            newState.leaderboard = newState.leaderboard.slice(0, 10);
+          }
+          io.to(auctionId).emit("auctionUpdate", newState);
+        }
+      } catch (e) {
+        console.error("Socket emit failed", e);
+      }
+    }
+
+    await sleep(Math.floor(Math.random() * 300) + 100);
   }
-  console.log("🤖 Traffic finished");
+
+  console.log("\nTraffic Simulation Finished");
 };

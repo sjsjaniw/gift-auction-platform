@@ -1,5 +1,26 @@
 services:
-  # MongoDB
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: auction_app
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - MONGO_URI=mongodb://mongo:27017/auction_db?replicaSet=rs0
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - NODE_ENV=production
+    depends_on:
+      - mongo
+      - redis
+    networks:
+      - app_network
+
+    volumes:
+      - ./backend/logs:/app/backend/logs
+
   mongo:
     image: mongo:6.0
     container_name: auction_mongo
@@ -10,12 +31,12 @@ services:
       - app_network
     volumes:
       - mongo_data:/data/db
+
     healthcheck:
-      test: test $$(echo "rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}).ok || rs.status().ok" | mongosh --port 27017 --quiet) -eq 1
+      test: test $$(echo "rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok || rs.status().ok" | mongosh --port 27017 --quiet) -eq 1
       interval: 10s
       start_period: 30s
 
-  # Redis
   redis:
     image: redis:alpine
     container_name: auction_redis

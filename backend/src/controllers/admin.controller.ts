@@ -1,17 +1,23 @@
 import { Request, Response } from "express";
 import { initializeDemo, startTrafficGen } from "../scripts/setup-demo";
+import { logger } from "../utils/logger";
 
 export const resetAndStartDemo = async (req: Request, res: Response) => {
   try {
+    logger.warn("ADMIN: Resetting database and starting Demo...");
+
     const data = await initializeDemo();
 
-    // Получаем IO из request (мы добавили его в middleware в index.ts)
     const io = (req as any).io;
 
-    // Запускаем трафик с io
     startTrafficGen(data.auctionId, data.botsList, 60, io).catch((err) =>
-      console.error("Traffic Gen Error:", err),
+      logger.error("Traffic Gen Error:", err),
     );
+
+    logger.info("Demo Environment Ready", {
+      auctionId: data.auctionId,
+      botCount: data.bots.length,
+    });
 
     res.json({
       success: true,
@@ -19,11 +25,11 @@ export const resetAndStartDemo = async (req: Request, res: Response) => {
       data: {
         auctionId: data.auctionId,
         myUserId: data.adminId,
-        bots: data.bots, // 👈 Отправляем список ботов
+        bots: data.bots,
       },
     });
   } catch (e) {
-    console.error(e);
+    logger.error("Failed to setup demo:", e);
     res.status(500).json({ error: "Failed to setup demo" });
   }
 };

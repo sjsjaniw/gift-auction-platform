@@ -1,7 +1,6 @@
 import { z } from "zod";
 import mongoose from "mongoose";
 
-// Кастомная проверка на ObjectId
 const ObjectIdSchema = z
   .string()
   .refine((val) => mongoose.Types.ObjectId.isValid(val), {

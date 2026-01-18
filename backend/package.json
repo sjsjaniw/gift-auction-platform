@@ -19,15 +19,18 @@
     "express": "^5.2.1",
     "ioredis": "^5.9.0",
     "mongoose": "^9.1.2",
+    "morgan": "^1.10.1",
     "nodemon": "^3.1.11",
     "redlock": "^5.0.0-beta.2",
     "socket.io": "^4.8.3",
     "socks": "^2.8.7",
     "socks-proxy-agent": "^8.0.5",
+    "winston": "^3.19.0",
     "zod": "^4.3.5"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
+    "@types/morgan": "^1.9.10",
     "@types/node": "^25.0.3",
     "@types/redlock": "^4.0.8",
     "tsx": "^4.21.0",

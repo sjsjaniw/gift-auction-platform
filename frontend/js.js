@@ -188,13 +188,15 @@ function handleLogin() {
   startApp();
 }
 
-// --- ОСНОВНАЯ ЛОГИКА ---
 function startApp() {
   console.log("⚡ Starting logic for:", state.auctionId);
 
   socket.emit("joinAuction", state.auctionId);
   socket.off("auctionUpdate");
-  socket.on("auctionUpdate", (data) => renderUI(data));
+  socket.on("auctionUpdate", (data) => {
+    console.log("Socket update received!", data);
+    renderUI(data);
+  });
 
   fetchUserInfo();
   fetchUserInventory();

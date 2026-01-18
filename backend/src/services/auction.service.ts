@@ -8,31 +8,23 @@ import { Transaction } from "../models/transaction.model";
 import { RankingService } from "./ranking.service";
 import { redisClient } from "../config/redis";
 import { CreateAuctionDto } from "../schemas/auction.schema";
-import { AnyBulkWriteOperation } from "mongoose"; // 👈 Тип операции bulkWrite
+import { AnyBulkWriteOperation } from "mongoose";
 import { IUser } from "../models/user.model";
 import { IBid } from "../models/bid.model";
 import { ITransaction } from "../models/transaction.model";
+import { logger } from "../utils/logger";
+import { getIO } from "../socket";
 
-// 🔥 ФИКС ТИПОВ REDLOCK
-// Мы вручную описываем интерфейс лока с методом release.
-// Это заставляет TypeScript игнорировать старые определения типов.
 interface ExecutionLock {
   release(): Promise<void>;
 }
 
 export class AuctionService {
-  /**
-   * 1. Создание аукциона
-   */
   static async createAuction(data: CreateAuctionDto) {
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
-      // 🔥 ФИКС ОШИБКИ TYPE NEVER
-      // Mongoose.create очень капризный к типам DTO vs Schema.
-      // Мы используем 'as any', чтобы сказать TS: "Поверь, данные подходят под схему".
-      // Это безопасно, так как мы уже провалидировали data через Zod в контроллере.
       const auctions = await Auction.create([data as any], { session });
       const auction = auctions[0];
 
@@ -63,9 +55,6 @@ export class AuctionService {
     }
   }
 
-  /**
-   * 2. Получить список активных
-   */
   static async getActiveAuctions() {
     return Auction.find(
       { status: { $in: ["ACTIVE", "PENDING"] } },
@@ -73,26 +62,26 @@ export class AuctionService {
     ).sort({ createdAt: -1 });
   }
 
-  /**
-   * 3. Сделать ставку
-   */
   static async placeBid(
     userId: string,
     auctionId: string,
     totalAmount: number,
   ) {
     const lockKey = `lock:bid:${auctionId}:${userId}`;
-
-    // 👇 Используем наш ручной интерфейс
     let lock: ExecutionLock | null = null;
 
     try {
-      // 👇 Принудительно приводим тип через 'as unknown', чтобы TS не спорил
       lock = (await redlock.acquire(
         [lockKey],
         4000,
       )) as unknown as ExecutionLock;
     } catch (e) {
+      logger.warn("Bid blocked (Concurrency)", {
+        userId,
+        auctionId,
+        reason: "Too many requests (Redlock)",
+      });
+
       throw new Error("Too fast! Please wait a moment.");
     }
 
@@ -113,7 +102,7 @@ export class AuctionService {
       const existingWin = await Bid.findOne({
         auctionId: auctionObjectId,
         userId: userObjectId,
-        status: "WON", // <--- Если есть хоть одна ставка WON
+        status: "WON",
       }).session(session);
 
       if (existingWin) {
@@ -199,12 +188,22 @@ export class AuctionService {
           );
           auction.markModified("rounds");
           await auction.save({ session });
+
+          logger.info("Round time extended (Anti-Sniping)", { auctionId });
         }
       }
 
       await session.commitTransaction();
 
       const rank = await RankingService.getUserPosition(auctionId, userId);
+
+      logger.info("Bid placed", {
+        userId,
+        auctionId,
+        amount: totalAmount,
+        rank,
+        balance: user.balance,
+      });
 
       return {
         success: true,
@@ -215,21 +214,24 @@ export class AuctionService {
       };
     } catch (e) {
       await session.abortTransaction();
+
+      logger.warn("Bid failed (Logic)", {
+        userId,
+        auctionId,
+        amount: totalAmount,
+        reason: e instanceof Error ? e.message : "Unknown error",
+      });
+
       throw e;
     } finally {
       session.endSession();
-      // 👇 Теперь ошибки нет, так как ExecutionLock имеет метод release
       if (lock) await lock.release();
     }
   }
 
-  /**
-   * 4. Обработка окончания раунда
-   */
   static async processRoundEnd(auctionId: string) {
     const lockKey = `lock:process:${auctionId}`;
 
-    // 👇 Используем интерфейс и здесь
     let lock: ExecutionLock | null = null;
 
     try {
@@ -264,9 +266,8 @@ export class AuctionService {
         return;
       }
 
-      console.log(`🔄 Processing Round ${auction.currentRoundNumber}...`);
+      logger.info(`Processing Round ${auction.currentRoundNumber}...`);
 
-      // === ЭТАП 1: ПОБЕДИТЕЛИ ===
       const winnerIds = await RankingService.getWinners(
         auctionId,
         currentRound.giftCount,
@@ -295,7 +296,7 @@ export class AuctionService {
           }).session(session);
 
           if (!bid) {
-            console.error(`Missing bid for winner ${userIdStr}`);
+            logger.error(`Missing bid for winner ${userIdStr}`);
             continue;
           }
 
@@ -334,23 +335,20 @@ export class AuctionService {
         await RankingService.removeWinners(auctionId, winnerIds);
       }
 
-      // === ЭТАП 2: СЛЕДУЮЩИЙ РАУНД ИЛИ ФИНАЛ ===
       currentRound.isProcessed = true;
       const nextRound = auction.rounds.find(
         (r) => r.roundNumber === auction.currentRoundNumber + 1,
       );
 
       if (nextRound) {
-        // Переход к следующему раунду
         auction.currentRoundNumber++;
         const duration = (nextRound as any).durationSeconds || 300;
         const now = new Date();
         nextRound.endTime = new Date(now.getTime() + duration * 1000);
-        console.log(`➡️ Round ${auction.currentRoundNumber} started.`);
+        logger.info(`Round ${auction.currentRoundNumber} started.`);
       } else {
-        // Завершение аукциона и возврат средств (Bulk Refund)
         auction.status = "FINISHED";
-        console.log("🏁 Auction Finished. Bulk Refund...");
+        logger.info("Auction Finished. Bulk Refund...");
 
         const loserIdsStr = await RankingService.getAllParticipants(auctionId);
 
@@ -406,7 +404,7 @@ export class AuctionService {
             if (txLogs.length > 0)
               await Transaction.insertMany(txLogs, { session });
 
-            console.log(`💸 Refunded ${bids.length} users.`);
+            logger.info(`Refunded ${bids.length} users.`);
           }
         }
         await RankingService.clearAuction(auctionId);
@@ -414,8 +412,18 @@ export class AuctionService {
 
       await auction.save({ session });
       await session.commitTransaction();
+      try {
+        const io = getIO();
+        const newState = await AuctionService.getAuctionState(auctionId);
+        if (newState) {
+          io.to(auctionId).emit("auctionUpdate", newState);
+          logger.info("Socket update sent from Worker");
+        }
+      } catch (err) {
+        logger.error("Socket error in worker (ignoring)", err);
+      }
     } catch (e) {
-      console.error("❌ Round Processing Error:", e);
+      logger.info("Round Processing Error:", e);
       await session.abortTransaction();
     } finally {
       session.endSession();
@@ -423,9 +431,6 @@ export class AuctionService {
     }
   }
 
-  /**
-   * 5. Состояние аукциона
-   */
   static async getAuctionState(auctionId: string) {
     if (!mongoose.Types.ObjectId.isValid(auctionId)) return null;
     const auction = await Auction.findById(auctionId);
