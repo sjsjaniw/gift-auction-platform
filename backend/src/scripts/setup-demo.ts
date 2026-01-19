@@ -9,7 +9,7 @@ import { Server } from "socket.io";
 
 const CONFIG = {
   adminName: "Admin",
-  botsCount: 50,
+  botsCount: 5000,
   auctionTitle: "Auction Demo",
 };
 
