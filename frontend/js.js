@@ -1,6 +1,5 @@
 const socket = io();
 
-// Состояние приложения
 const state = {
   userId: localStorage.getItem("userId") || "",
   auctionId: localStorage.getItem("auctionId") || "",
@@ -10,7 +9,6 @@ const state = {
   userDataInterval: null,
 };
 
-// Ссылки на элементы DOM
 const ui = {
   screens: {
     login: document.getElementById("screen-login"),
@@ -38,14 +36,18 @@ const ui = {
     status: document.getElementById("status-log"),
     inventory: document.getElementById("inventory-grid"),
     demoInfo: document.getElementById("demo-info"),
-    botsGrid: document.getElementById("bots-grid"), // Используем тот же ID контейнера
+    botsGrid: document.getElementById("bots-grid"),
     botsContainer: document.getElementById("bots-container"),
+
+    codeAucId: document.getElementById("code-auction-id"),
   },
 };
 
-// --- ИНИЦИАЛИЗАЦИЯ ---
 document.addEventListener("DOMContentLoaded", () => {
   if (!ui.inputs.auction) return;
+
+  restoreDemoData();
+
   loadAuctionList();
 
   if (state.userId && ui.inputs.user) ui.inputs.user.value = state.userId;
@@ -56,7 +58,71 @@ document.addEventListener("DOMContentLoaded", () => {
     ui.buttons.setupDemo.addEventListener("click", setupDemo);
 });
 
-// --- ЛОГИКА ДЕМО (SIMULATION) ---
+function renderDemoList(data) {
+  if (!ui.display.botsGrid || !ui.display.demoInfo) return;
+
+  ui.display.demoInfo.classList.remove("hidden");
+  ui.display.botsContainer.classList.remove("hidden");
+
+  if (ui.display.codeAucId) ui.display.codeAucId.innerText = data.auctionId;
+
+  ui.display.botsGrid.className = "bots-list";
+  ui.display.botsGrid.innerHTML = "";
+
+  if (data.myUserId) {
+    const adminRow = document.createElement("div");
+    adminRow.className = "bot-row";
+    adminRow.style.borderBottom = "2px solid #007aff"; // Подсветка для админа
+
+    adminRow.innerHTML = `
+      <span style="color: #ffd60a; font-weight: bold;">👑 Admin (You)</span>
+      <span class="bot-id">${data.myUserId}</span>
+    `;
+
+    adminRow.onclick = () => {
+      ui.inputs.user.value = data.myUserId;
+      flashRow(adminRow);
+    };
+    ui.display.botsGrid.appendChild(adminRow);
+  }
+
+  if (data.bots && Array.isArray(data.bots)) {
+    data.bots.forEach((bot) => {
+      const row = document.createElement("div");
+      row.className = "bot-row";
+      row.innerHTML = `
+        <span>${bot.username}</span>
+        <span class="bot-id">${bot.id}</span>
+      `;
+
+      row.onclick = () => {
+        ui.inputs.user.value = bot.id;
+        flashRow(row);
+      };
+
+      ui.display.botsGrid.appendChild(row);
+    });
+  }
+}
+
+function flashRow(element) {
+  element.style.background = "#333";
+  setTimeout(() => (element.style.background = ""), 200);
+}
+
+function restoreDemoData() {
+  try {
+    const savedJson = localStorage.getItem("demoData");
+    if (savedJson) {
+      const data = JSON.parse(savedJson);
+
+      renderDemoList(data);
+    }
+  } catch (e) {
+    console.error("Failed to restore demo data", e);
+  }
+}
+
 async function setupDemo() {
   const btn = ui.buttons.setupDemo;
   btn.disabled = true;
@@ -67,52 +133,15 @@ async function setupDemo() {
     const json = await res.json();
 
     if (json.success) {
-      // 1. Показываем инфо-блок
-      if (ui.display.demoInfo) ui.display.demoInfo.classList.remove("hidden");
+      localStorage.setItem("demoData", JSON.stringify(json.data));
 
-      // 2. Обновляем текстовые коды (Admin ID)
-      const codeUser = document.getElementById("code-user-id");
-      const codeAuc = document.getElementById("code-auction-id");
-      if (codeUser) codeUser.innerText = json.data.myUserId;
-      if (codeAuc) codeAuc.innerText = json.data.auctionId;
+      renderDemoList(json.data);
 
-      // 3. Автозаполнение поля
       if (ui.inputs.user) ui.inputs.user.value = json.data.myUserId;
 
-      // 4. 👇 Рендерим СПИСОК ботов (Новый вид)
-      if (json.data.bots && ui.display.botsGrid) {
-        ui.display.botsContainer.classList.remove("hidden");
-        // Меняем класс контейнера на новый (для списка)
-        ui.display.botsGrid.className = "bots-list";
-        ui.display.botsGrid.innerHTML = "";
-
-        json.data.bots.forEach((bot) => {
-          const row = document.createElement("div");
-          row.className = "bot-row";
-
-          // Формируем строку: "Bot_1       65b7..."
-          row.innerHTML = `
-            <span>${bot.username}</span>
-            <span class="bot-id">${bot.id}</span>
-          `;
-
-          // При клике по строке - заполняем input (удобно для копипаста)
-          row.onclick = () => {
-            ui.inputs.user.value = bot.id;
-            // Короткая подсветка, что нажалось
-            row.style.background = "#333";
-            setTimeout(() => (row.style.background = ""), 200);
-          };
-
-          ui.display.botsGrid.appendChild(row);
-        });
-      }
-
-      // 5. Обновляем выпадающий список
       await loadAuctionList();
       if (ui.inputs.auction) ui.inputs.auction.value = json.data.auctionId;
 
-      // 6. Подключаем сокеты
       state.auctionId = json.data.auctionId;
       console.log("🔌 Re-joining socket room:", state.auctionId);
       socket.emit("joinAuction", state.auctionId);
@@ -135,7 +164,6 @@ async function setupDemo() {
   }
 }
 
-// Хелпер для копирования ID
 window.copyToClipboard = (id) => {
   const el = document.getElementById(id);
   if (el) {
@@ -143,7 +171,6 @@ window.copyToClipboard = (id) => {
   }
 };
 
-// --- ЛОГИКА ВХОДА ---
 async function loadAuctionList() {
   const select = ui.inputs.auction;
   try {
@@ -164,8 +191,19 @@ async function loadAuctionList() {
       select.appendChild(opt);
     });
 
-    if (state.auctionId && auctions.find((a) => a._id === state.auctionId)) {
-      select.value = state.auctionId;
+    const savedDemo = localStorage.getItem("demoData");
+    let targetId = state.auctionId;
+
+    if (savedDemo) {
+      try {
+        const d = JSON.parse(savedDemo);
+        if (d.auctionId) targetId = d.auctionId;
+      } catch (e) {}
+    }
+
+    if (targetId && auctions.find((a) => a._id === targetId)) {
+      select.value = targetId;
+      state.auctionId = targetId;
     }
   } catch (e) {
     console.error(e);
@@ -194,7 +232,6 @@ function startApp() {
   socket.emit("joinAuction", state.auctionId);
   socket.off("auctionUpdate");
   socket.on("auctionUpdate", (data) => {
-    console.log("Socket update received!", data);
     renderUI(data);
   });
 
@@ -283,8 +320,6 @@ async function placeBid() {
     }
   }
 }
-
-// --- ВИЗУАЛ ---
 
 function lockInterfaceAsWinner() {
   if (ui.buttons.bid) {
